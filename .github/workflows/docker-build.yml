@@ -9,7 +9,7 @@ on:
     - cron: "0 13 * * 1"
   
 env:
-  USERNAME: "kreato"
+  USERNAME: "kreatoo"
   REPO: "test-project"
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -21,6 +21,8 @@ jobs:
       contents: read
       packages: write
     runs-on: ${{ matrix.runs-on }}
+    outputs:
+      latest_tag: ${{ steps.latest_tag.outputs.tag }}
     strategy:
       fail-fast: false
       matrix:
@@ -36,8 +38,9 @@ jobs:
       - name: Get latest tag
         id: latest_tag
         run: |
-          LATEST_TAG=$(curl -s https://api.github.com/repos/${{ env.USERNAME }}/${{ env.REPO }}/tags | jq -r '.[0].name')
-          echo "LATEST_TAG=${LATEST_TAG}" >> $GITHUB_ENV
+          TAG=$(curl -s https://api.github.com/repos/${{ env.USERNAME }}/${{ env.REPO }}/tags | jq -r '.[0].name')
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "LATEST_TAG=${TAG}" >> $GITHUB_ENV
      
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -103,6 +106,8 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - build
+    env:
+      LATEST_TAG: ${{ needs.build.outputs.latest_tag }}
     steps:
       - name: Download digests
         uses: actions/download-artifact@v4
@@ -127,10 +132,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY_IMAGE }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=true
+            type=raw,value=${{ env.LATEST_TAG }},enable=true
 
       - name: Create manifest list and push
         working-directory: ${{ runner.temp }}/digests
@@ -140,13 +143,15 @@ jobs:
 
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.meta.outputs.version }}
+          docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:latest
 
   create-release:
-    needs: merge
+    needs: [build, merge]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      LATEST_TAG: ${{ needs.build.outputs.latest_tag }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
